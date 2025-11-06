@@ -55,7 +55,15 @@ export async function generateEnhancedPrompt(instructions: string, apiKey: strin
 }
 
 
-export async function generateUniversalImageStylePrompt(base64Image: string, mimeType: string, apiKey: string): Promise<string> {
+export async function generateUniversalImageStylePrompt(base64Image: string, mimeType: string, apiKey: string, extractClothingDetails: boolean): Promise<string> {
+    const clothingPromptSection = extractClothingDetails 
+    ? `
+    **8. Vestuário (Clothing):**
+    - Descreva o tipo de roupa de forma genérica (ex: "vestuário formal", "casaco de inverno pesado", "camiseta casual de algodão").
+    - Detalhe o material, a textura e o caimento (ex: "tecido de lã texturizado", "couro liso com brilho suave", "linho com caimento solto").
+    - Mencione cores e padrões de forma transferível (ex: "tons neutros e escuros", "padrão xadrez sutil").`
+    : '';
+    
     const prompt = `
     Você é um especialista em engenharia de prompts para edição de imagens com IA. Sua tarefa é analisar a imagem fornecida e criar um "prompt de estilo universal" que possa ser aplicado a *outra* imagem de retrato para replicar o estilo, a iluminação e a atmosfera da imagem original.
 
@@ -92,7 +100,7 @@ export async function generateUniversalImageStylePrompt(base64Image: string, mim
 
     **7. Detalhes Finos a Replicar:**
     - Mencione detalhes importantes (ex: "Garanta reflexos sutis e vivos nos olhos", "Realce a textura dos tecidos da roupa", "Mantenha a nitidez nos detalhes da pele e do cabelo.").
-
+    ${clothingPromptSection}
     Responda APENAS com o prompt de estilo universal gerado, sem explicações adicionais.
     `;
   
