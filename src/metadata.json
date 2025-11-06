@@ -1,0 +1,5 @@
+{
+  "name": "Gerador de Prompt Acadêmico",
+  "description": "Uma aplicação que transforma instruções de documentos PDF em prompts bem estruturados para IA, ajudando estudantes a desenvolver seus trabalhos acadêmicos.",
+  "requestFramePermissions": []
+}

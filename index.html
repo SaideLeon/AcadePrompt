@@ -1,12 +1,70 @@
-<!doctype html>
-<html lang="en">
+<!DOCTYPE html>
+<html lang="pt-br">
   <head>
-    <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta charset="UTF-g" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>myapp</title>
-  </head>
-  <body>
+    <title>Gerador de Prompt Acadêmico</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Poppins:wght@700;800&display=swap" rel="stylesheet">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+    <script>
+      // Required for pdf.js to work
+      pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+    </script>
+    <style>
+      :root {
+        --primary-dark: #0D285B;
+        --primary-main: #1A50B5;
+        --primary-light: #4D7DD1;
+        --accent-green: #2EEA7A;
+        --accent-orange: #FFA500;
+        --bg-primary: #0A0F1E;
+        --bg-secondary: #131A33;
+        --bg-tertiary: #222B4C;
+        --text-primary: #FFFFFF;
+        --text-secondary: #B0B8D9;
+        --text-muted: #7A85B0;
+        --border-color: #222B4C;
+      }
+      html, body, #root {
+        height: 100%;
+        overflow: hidden; /* Prevent body scrollbar, let content area scroll */
+      }
+      body {
+        font-family: 'Inter', sans-serif;
+      }
+      h1, h2, h3, .font-heading {
+        font-family: 'Poppins', sans-serif;
+      }
+      ::-webkit-scrollbar {
+        width: 8px;
+        height: 8px;
+      }
+      ::-webkit-scrollbar-track {
+        background: var(--bg-primary);
+      }
+      ::-webkit-scrollbar-thumb {
+        background: var(--bg-tertiary);
+        border-radius: 4px;
+      }
+      ::-webkit-scrollbar-thumb:hover {
+        background: var(--primary-light);
+      }
+    </style>
+  <script type="importmap">
+{
+  "imports": {
+    "react": "https://aistudiocdn.com/react@^19.2.0",
+    "react-dom/": "https://aistudiocdn.com/react-dom@^19.2.0/",
+    "react/": "https://aistudiocdn.com/react@^19.2.0/",
+    "@google/genai": "https://aistudiocdn.com/@google/genai@^1.28.0"
+  }
+}
+</script>
+</head>
+  <body class="bg-[--bg-primary] text-[--text-secondary] font-sans antialiased">
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
