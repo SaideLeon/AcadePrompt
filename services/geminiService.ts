@@ -1,46 +1,34 @@
 import { GoogleGenAI } from "@google/genai";
 
-async function callGemini(prompt: string, apiKey: string): Promise<string> {
-    if (!apiKey) {
-        throw new Error("A chave de API não está configurada. Por favor, adicione sua chave nas configurações.");
+// Instancia o cliente GoogleGenAI uma vez com a chave do ambiente.
+const ai = new GoogleGenAI({ apiKey: process.env.API_KEY! });
+const model = "gemini-2.5-flash";
+
+// Manipulador de erro genérico para chamadas da API Gemini.
+const handleGeminiError = (error: unknown): never => {
+    console.error("Error calling Gemini API:", error);
+    if (error instanceof Error && (error.message.includes('API key not valid') || error.message.includes('permission is required'))) {
+        throw new Error("A chave de API fornecida é inválida ou não tem as permissões necessárias.");
     }
+    throw new Error("Não foi possível se comunicar com a API do Gemini. Verifique o console para mais detalhes.");
+};
 
-    const ai = new GoogleGenAI({ apiKey });
-    const model = "gemini-2.5-flash";
-
-    try {
-        const response = await ai.models.generateContent({
-            model: model,
-            contents: prompt
-        });
-        return response.text;
-    } catch (error) {
-        console.error("Error calling Gemini API:", error);
-        if (error instanceof Error && (error.message.includes('API key not valid') || error.message.includes('permission is required'))) {
-            throw new Error("Sua chave de API é inválida ou não tem as permissões necessárias. Verifique-a nas configurações.");
-       }
-        throw new Error("Não foi possível gerar o prompt. Verifique o console para mais detalhes.");
-    }
-}
-
-
-export async function generateEnhancedPrompt(instructions: string, apiKey: string): Promise<string> {
-  const prompt = `
+const academicSystemPrompt = (instructions: string) => `
     Você é um especialista em engenharia de prompts, especializado em transformar instruções acadêmicas em prompts detalhados e eficazes para modelos de IA. Sua tarefa é pegar as seguintes instruções brutas de um trabalho de estudante e convertê-las em um prompt bem estruturado que uma IA possa usar para gerar uma resposta de alta qualidade.
 
     O prompt gerado deve seguir estritamente esta estrutura:
     
-    **1. persona:** Defina o papel que a IA deve assumir (por exemplo, "Aja como um estudante universitário de história do Brasil, com conhecimento aprofundado no período colonial.").
+    **1. Persona:** Defina o papel que a IA deve assumir (por exemplo, "Aja como um estudante universitário de história do Brasil, com conhecimento aprofundado no período colonial.").
     
-    **2. objetivo principal:** Descreva o objetivo central do trabalho de forma clara e concisa.
+    **2. Objetivo Principal:** Descreva o objetivo central do trabalho de forma clara e concisa.
     
-    **3. tarefas/etapas detalhadas:** Divida a tarefa principal em uma lista numerada de subtarefas ou etapas lógicas que a IA deve seguir para construir a resposta. Seja o mais específico possível.
+    **3. Tarefas/Etapas Detalhadas:** Divida a tarefa principal em uma lista numerada de subtarefas ou etapas lógicas que a IA deve seguir para construir a resposta. Seja o mais específico possível.
     
-    **4. formato de saída:** Especifique o formato exato da saída (por exemplo, "enssaio dissertativo-argumentativo", "relatório técnico", "código Python comentado", "apresentação de slides em formato de tópicos").
+    **4. Formato de Saída:** Especifique o formato exato da saída (por exemplo, "ensaio dissertativo-argumentativo", "relatório técnico", "código Python comentado", "apresentação de slides em formato de tópicos").
     
-    **5. restrições e requisitos:** Liste todas as restrições e requisitos obrigatórios mencionados nas instruções originais, como contagem de palavras, número de fontes, estilo de citação (ABNT, APA), tópicos a serem evitados, etc.
+    **5. Restrições e Requisitos:** Liste todas as restrições e requisitos obrigatórios mencionados nas instruções originais, como contagem de palavras, número de fontes, estilo de citação (ABNT, APA), tópicos a serem evitados, etc.
     
-    **6. exemplo/estrutura de saída (se aplicável):** Se for útil, forneça um esqueleto ou um breve exemplo de como a saída deve ser estruturada.
+    **6. Exemplo/Estrutura de Saída (se aplicável):** Se for útil, forneça um esqueleto ou um breve exemplo de como a saída deve ser estruturada.
 
     ---
     INSTRUÇÕES BRUTAS DO ESTUDANTE:
@@ -51,12 +39,35 @@ export async function generateEnhancedPrompt(instructions: string, apiKey: strin
     Agora, gere o prompt estruturado com base nessas instruções. Responda apenas com o prompt gerado.
   `;
 
-  return await callGemini(prompt, apiKey);
+export async function generateEnhancedPrompt(instructions: string): Promise<string> {
+  try {
+      const response = await ai.models.generateContent({
+          model,
+          contents: academicSystemPrompt(instructions)
+      });
+      return response.text;
+  } catch (error) {
+      handleGeminiError(error);
+  }
+}
+
+export async function* generateEnhancedPromptStream(instructions: string): AsyncGenerator<string> {
+    try {
+        const responseStream = await ai.models.generateContentStream({
+            model,
+            contents: academicSystemPrompt(instructions)
+        });
+        for await (const chunk of responseStream) {
+            yield chunk.text;
+        }
+    } catch (error) {
+        handleGeminiError(error);
+    }
 }
 
 
-export async function generateUniversalImageStylePrompt(base64Image: string, mimeType: string, apiKey: string): Promise<string> {
-    const prompt = `
+export async function generateUniversalImageStylePrompt(base64Image: string, mimeType: string): Promise<string> {
+    const systemPrompt = `
     Você é um especialista em engenharia de prompts para edição de imagens com IA. Sua tarefa é analisar a imagem fornecida e criar um "prompt de estilo universal" que possa ser aplicado a *outra* imagem de retrato para replicar o estilo, a iluminação e a atmosfera da imagem original.
 
     **Instruções Cruciais:**
@@ -96,13 +107,6 @@ export async function generateUniversalImageStylePrompt(base64Image: string, mim
     Responda APENAS com o prompt de estilo universal gerado, sem explicações adicionais.
     `;
   
-    if (!apiKey) {
-        throw new Error("A chave de API não está configurada. Por favor, adicione sua chave nas configurações.");
-    }
-  
-    const ai = new GoogleGenAI({ apiKey });
-    const model = "gemini-2.5-flash";
-  
     try {
       const imagePart = {
         inlineData: {
@@ -111,42 +115,61 @@ export async function generateUniversalImageStylePrompt(base64Image: string, mim
         },
       };
       const textPart = {
-        text: prompt
+        text: systemPrompt
       };
   
       const response = await ai.models.generateContent({
-        model: model,
+        model,
         contents: { parts: [imagePart, textPart] },
       });
       return response.text;
     } catch (error) {
-        console.error("Error calling Gemini API:", error);
-        if (error instanceof Error && (error.message.includes('API key not valid') || error.message.includes('permission is required'))) {
-            throw new Error("Sua chave de API é inválida ou não tem as permissões necessárias. Verifique-a nas configurações.");
-        }
-        throw new Error("Não foi possível gerar o prompt. Verifique o console para mais detalhes.");
+        handleGeminiError(error);
     }
 }
 
-export async function generateOptimizedInstruction(instruction: string, apiKey: string): Promise<string> {
-    const prompt = `
-        Você é um especialista em engenharia de prompts para modelos de linguagem (LLMs). Sua função é pegar uma instrução vaga ou simples de um usuário e transformá-la em um prompt robusto, claro e detalhado, garantindo que a IA produza uma resposta de alta qualidade e alinhada com a intenção do usuário.
+const optimizerSystemPrompt = (instruction: string) => `
+    Você é um especialista em engenharia de prompts para modelos de linguagem (LLMs). Sua função é pegar uma instrução vaga ou simples de um usuário e transformá-la em um prompt robusto, claro e detalhado, garantindo que a IA produza uma resposta de alta qualidade e alinhada com a intenção do usuário.
 
-        A instrução do usuário é: "${instruction}"
+    A instrução do usuário é: "${instruction}"
 
-        Agora, otimize e expanda essa instrução em um prompt bem estruturado, usando as seguintes seções:
+    Agora, otimize e expanda essa instrução em um prompt bem estruturado, usando as seguintes seções:
 
-        **1. Contexto e Persona:** Defina um papel específico para a IA assumir e o contexto da tarefa. (Ex: "Aja como um gerente de marketing sênior preparando um email para o lançamento de um novo produto.").
+    **1. Contexto e Persona:** Defina um papel específico para a IA assumir e o contexto da tarefa. (Ex: "Aja como um gerente de marketing sênior preparando um email para o lançamento de um novo produto.").
 
-        **2. Objetivo Final:** Qual é o resultado principal e mensurável que se espera da IA? (Ex: "O objetivo é gerar um texto de email persuasivo que incentive os clientes a clicarem no link de 'saiba mais'.").
+    **2. Objetivo Final:** Qual é o resultado principal e mensurável que se espera da IA? (Ex: "O objetivo é gerar um texto de email persuasivo que incentive os clientes a clicarem no link de 'saiba mais'.").
 
-        **3. Passos e Requisitos:** Detalhe as etapas que a IA deve seguir ou os elementos que devem ser incluídos na resposta. Use uma lista numerada para clareza. (Ex: "1. Comece com uma linha de assunto cativante. 2. Apresente o problema que o produto resolve. 3. Descreva os 3 principais benefícios do produto. 4. Inclua um call-to-action claro.").
+    **3. Passos e Requisitos:** Detalhe as etapas que a IA deve seguir ou os elementos que devem ser incluídos na resposta. Use uma lista numerada para clareza. (Ex: "1. Comece com uma linha de assunto cativante. 2. Apresente o problema que o produto resolve. 3. Descreva os 3 principais benefícios do produto. 4. Inclua um call-to-action claro.").
 
-        **4. Tom e Estilo:** Especifique o tom de voz e o estilo de escrita. (Ex: "O tom deve ser profissional, mas entusiasmado e amigável. Use linguagem simples e direta.").
+    **4. Tom e Estilo:** Especifique o tom de voz e o estilo de escrita. (Ex: "O tom deve ser profissional, mas entusiasmado e amigável. Use linguagem simples e direta.").
 
-        **5. Formato de Saída:** Descreva como a resposta final deve ser formatada. (Ex: "A saída deve ser um único bloco de texto de email, com no máximo 200 palavras.").
-        
-        Responda apenas com o prompt otimizado.
-    `;
-    return await callGemini(prompt, apiKey);
+    **5. Formato de Saída:** Descreva como a resposta final deve ser formatada. (Ex: "A saída deve ser um único bloco de texto de email, com no máximo 200 palavras.").
+    
+    Responda apenas com o prompt otimizado.
+`;
+
+export async function generateOptimizedInstruction(instruction: string): Promise<string> {
+    try {
+        const response = await ai.models.generateContent({
+            model,
+            contents: optimizerSystemPrompt(instruction)
+        });
+        return response.text;
+    } catch (error) {
+        handleGeminiError(error);
+    }
+}
+
+export async function* generateOptimizedInstructionStream(instruction: string): AsyncGenerator<string> {
+    try {
+        const responseStream = await ai.models.generateContentStream({
+            model,
+            contents: optimizerSystemPrompt(instruction)
+        });
+        for await (const chunk of responseStream) {
+            yield chunk.text;
+        }
+    } catch (error) {
+        handleGeminiError(error);
+    }
 }

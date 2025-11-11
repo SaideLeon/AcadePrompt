@@ -1,7 +1,7 @@
 
 import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import { AppStatus } from './types';
-import { generateEnhancedPrompt, generateUniversalImageStylePrompt, generateOptimizedInstruction } from './services/geminiService';
+import { generateEnhancedPrompt, generateUniversalImageStylePrompt, generateEnhancedPromptStream, generateOptimizedInstructionStream } from './services/geminiService';
 
 // Helper to define types for PDF.js library loaded from CDN
 declare const pdfjsLib: any;
@@ -52,13 +52,7 @@ const MenuIcon: React.FC<{ className?: string }> = ({ className }) => (
       <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16" />
     </svg>
 );
-const SettingsIcon: React.FC<{ className?: string }> = ({ className }) => (
-    <svg xmlns="http://www.w3.org/2000/svg" className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-        <path strokeLinecap="round" strokeLinejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-        <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-    </svg>
-);
-// --- Icons for Explanation Section ---
+// --- Icons for Explanation & Structured Prompt Section ---
 const PersonaIcon: React.FC<{ className?: string }> = ({ className }) => (
     <svg xmlns="http://www.w3.org/2000/svg" className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
       <path strokeLinecap="round" strokeLinejoin="round" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
@@ -118,6 +112,11 @@ type AppSessionState = {
   academicText: string;
   optimizerInstruction: string;
 };
+type ParsedPromptSection = {
+    title: string;
+    content: string;
+    icon: React.FC<{ className?: string }>;
+};
 
 // --- State Persistence ---
 const loadSessionState = (): AppSessionState => {
@@ -131,10 +130,6 @@ const loadSessionState = (): AppSessionState => {
     const savedStateJSON = localStorage.getItem('appSessionState');
     if (savedStateJSON) {
       const savedState = JSON.parse(savedStateJSON);
-      // Ensure chat mode isn't loaded from old state
-      if (savedState.promptMode === 'chat') {
-        savedState.promptMode = 'academic';
-      }
       return { ...defaultState, ...savedState };
     }
   } catch (e) {
@@ -153,12 +148,8 @@ const App: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [isCopied, setIsCopied] = useState<boolean>(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [loadingMessage, setLoadingMessage] = useState<string>('');
   
-  // API Key State
-  const [apiKey, setApiKey] = useState<string | null>(() => localStorage.getItem('geminiApiKey'));
-  const [isApiKeyModalOpen, setIsApiKeyModalOpen] = useState<boolean>(false);
-  const [tempApiKey, setTempApiKey] = useState<string>('');
-
   // Mode State (from session)
   const [promptMode, setPromptMode] = useState<PromptMode>(initialSessionState.promptMode);
   
@@ -188,13 +179,6 @@ const App: React.FC = () => {
   ];
 
   // --- EFFECT HOOKS ---
-  useEffect(() => {
-    if (!apiKey) {
-      setIsApiKeyModalOpen(true);
-    }
-  }, [apiKey]);
-  
-  // Effect to save session state to localStorage
   useEffect(() => {
     const stateToSave: AppSessionState = {
       promptMode,
@@ -234,27 +218,13 @@ const App: React.FC = () => {
 
   const formattedPromptHtml = useMemo(() => {
     if (!generatedPrompt) return { __html: '' };
-    const html = generatedPrompt.replace(/\*\*(.*?)\*\*/g, '<strong class="text-[--primary-light] font-semibold">$1</strong>');
+    const html = generatedPrompt
+        .replace(/</g, "&lt;").replace(/>/g, "&gt;") // Escape HTML
+        .replace(/\*\*(.*?)\*\*/g, '<strong class="text-[--primary-light] font-semibold">$1</strong>');
     return { __html: html };
   }, [generatedPrompt]);
   
-
   // --- HANDLERS ---
-  const handleSaveApiKey = () => {
-    if (!tempApiKey.trim()) {
-      return;
-    }
-    localStorage.setItem('geminiApiKey', tempApiKey);
-    setApiKey(tempApiKey);
-    setIsApiKeyModalOpen(false);
-    setTempApiKey('');
-  };
-
-  const handleOpenApiKeyModal = () => {
-    setTempApiKey(apiKey || '');
-    setIsApiKeyModalOpen(true);
-  };
-
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -277,12 +247,8 @@ const App: React.FC = () => {
   };
 
   const processPdfFile = async (file: File) => {
-    if (!apiKey) {
-        setError('Por favor, configure sua chave de API nas configurações antes de continuar.');
-        setStatus(AppStatus.ERROR);
-        return;
-    }
     setStatus(AppStatus.PROCESSING);
+    setLoadingMessage('Processando o PDF e extraindo o texto...');
     setError(null);
     setGeneratedPrompt('');
     try {
@@ -299,7 +265,8 @@ const App: React.FC = () => {
         throw new Error('O PDF parece estar vazio ou não contém texto legível.');
       }
       
-      const prompt = await generateEnhancedPrompt(fullText, apiKey);
+      setLoadingMessage('Analisando as instruções e gerando o prompt...');
+      const prompt = await generateEnhancedPrompt(fullText);
       setGeneratedPrompt(prompt);
       setStatus(AppStatus.SUCCESS);
       setAcademicHistory(prev => [prompt, ...prev.filter(p => p !== prompt)].slice(0, 10));
@@ -307,25 +274,36 @@ const App: React.FC = () => {
     } catch (err: any) {
       setError(err.message || 'Ocorreu um erro ao processar o arquivo.');
       setStatus(AppStatus.ERROR);
+    } finally {
+        setLoadingMessage('');
     }
   };
 
   const handleGenerateClick = async () => {
-    if (!apiKey) {
-        setError('Por favor, configure sua chave de API nas configurações antes de continuar.');
-        setStatus(AppStatus.ERROR);
-        return;
-    }
     setStatus(AppStatus.PROCESSING);
     setError(null);
     setGeneratedPrompt('');
+
+    let currentLoadingMessage = 'Gerando prompt...';
+    if (promptMode === 'academic') {
+        currentLoadingMessage = 'Analisando as instruções e gerando o prompt...';
+    } else if (promptMode === 'image') {
+        currentLoadingMessage = 'Analisando a imagem e extraindo o estilo...';
+    } else if (promptMode === 'optimizer') {
+        currentLoadingMessage = 'Otimizando sua instrução...';
+    }
+    setLoadingMessage(currentLoadingMessage);
     
     try {
-        let prompt = '';
         if (promptMode === 'academic') {
             if (!academicText.trim()) throw new Error('Por favor, insira as instruções do trabalho.');
-            prompt = await generateEnhancedPrompt(academicText, apiKey);
-            setAcademicHistory(prev => [prompt, ...prev.filter(p => p !== prompt)].slice(0, 10));
+            const stream = generateEnhancedPromptStream(academicText);
+            let finalPrompt = "";
+            for await (const chunk of stream) {
+                finalPrompt += chunk;
+                setGeneratedPrompt(finalPrompt);
+            }
+            setAcademicHistory(prev => [finalPrompt, ...prev.filter(p => p !== finalPrompt)].slice(0, 10));
         } else if (promptMode === 'image') {
             if (!imageFile) throw new Error('Por favor, carregue uma imagem.');
             
@@ -341,18 +319,25 @@ const App: React.FC = () => {
                 });
 
             const base64Image = await fileToBase64(imageFile);
-            prompt = await generateUniversalImageStylePrompt(base64Image, imageFile.type, apiKey);
+            const prompt = await generateUniversalImageStylePrompt(base64Image, imageFile.type);
+            setGeneratedPrompt(prompt);
             setImageHistory(prev => [prompt, ...prev.filter(p => p !== prompt)].slice(0, 10));
         } else if (promptMode === 'optimizer') {
             if (!optimizerInstruction.trim()) throw new Error('Por favor, insira uma instrução para otimizar.');
-            prompt = await generateOptimizedInstruction(optimizerInstruction, apiKey);
-            setOptimizerHistory(prev => [prompt, ...prev.filter(p => p !== prompt)].slice(0, 10));
+            const stream = generateOptimizedInstructionStream(optimizerInstruction);
+            let finalPrompt = "";
+            for await (const chunk of stream) {
+                finalPrompt += chunk;
+                setGeneratedPrompt(finalPrompt);
+            }
+            setOptimizerHistory(prev => [finalPrompt, ...prev.filter(p => p !== finalPrompt)].slice(0, 10));
         }
-        setGeneratedPrompt(prompt);
         setStatus(AppStatus.SUCCESS);
     } catch (err: any) {
         setError(err.message || 'Ocorreu um erro ao gerar o prompt.');
         setStatus(AppStatus.ERROR);
+    } finally {
+        setLoadingMessage('');
     }
   };
 
@@ -454,51 +439,6 @@ const App: React.FC = () => {
   };
   
   // --- RENDER FUNCTIONS ---
-  const renderApiKeyModal = () => {
-    if (!isApiKeyModalOpen) return null;
-
-    return (
-        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 backdrop-blur-md" aria-modal="true" role="dialog">
-            <div className="bg-[--bg-secondary] rounded-xl shadow-2xl p-6 sm:p-8 w-full max-w-md border border-[--border-color]">
-                <h2 className="text-2xl font-bold text-[--primary-light] font-heading">Configurar Chave de API</h2>
-                <p className="mt-2 text-[--text-secondary] text-sm">
-                    Para usar esta aplicação, você precisa de uma chave de API do Google Generative AI.
-                </p>
-                <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener noreferrer" className="text-sm text-[--primary-light] hover:underline mt-1 inline-block">
-                    Obtenha sua chave aqui &rarr;
-                </a>
-                <div className="mt-6">
-                    <label htmlFor="apiKeyInput" className="block text-sm font-medium text-[--text-secondary]">Sua Chave de API</label>
-                    <input
-                        id="apiKeyInput"
-                        type="password"
-                        value={tempApiKey}
-                        onChange={(e) => setTempApiKey(e.target.value)}
-                        placeholder="Cole sua chave de API aqui"
-                        className="mt-1 block w-full px-3 py-2 bg-[--bg-primary] border border-[--border-color] rounded-md text-white placeholder-[--text-muted] focus:outline-none focus:ring-2 focus:ring-[--primary-main] focus:border-[--primary-main]"
-                    />
-                </div>
-                <div className="mt-6 flex justify-end gap-4">
-                    {apiKey && (
-                        <button 
-                            onClick={() => setIsApiKeyModalOpen(false)}
-                            className="px-4 py-2 text-sm font-medium text-[--text-secondary] bg-[--bg-tertiary] rounded-md hover:brightness-125 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-[--bg-secondary] focus:ring-gray-500">
-                            Cancelar
-                        </button>
-                    )}
-                    <button 
-                        onClick={handleSaveApiKey}
-                        className="px-6 py-2 text-sm font-semibold text-black/80 bg-[--accent-green] rounded-md shadow-sm hover:brightness-95 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-[--bg-secondary] focus:ring-[--accent-green] disabled:bg-gray-500 disabled:cursor-not-allowed"
-                        disabled={!tempApiKey.trim()}
-                    >
-                        Salvar Chave
-                    </button>
-                </div>
-            </div>
-        </div>
-    );
-  };
-
   const renderPromptExplanation = () => (
     <section className="mt-12 w-full max-w-4xl p-6 bg-[--bg-secondary]/50 border border-[--border-color] rounded-xl transition-all">
         <div className="flex justify-between items-center cursor-pointer" onClick={() => setIsExplanationVisible(!isExplanationVisible)} role="button" tabIndex={0} onKeyDown={(e) => e.key === 'Enter' && setIsExplanationVisible(!isExplanationVisible)} aria-expanded={isExplanationVisible}>
@@ -521,6 +461,79 @@ const App: React.FC = () => {
     </section>
   );
 
+  const iconMap: { [key: string]: React.FC<{ className?: string }> } = {
+    'persona': PersonaIcon,
+    'objetivo principal': TargetIcon,
+    'objetivo final': TargetIcon,
+    'tarefas/etapas detalhadas': ChecklistIcon,
+    'passos e requisitos': ChecklistIcon,
+    'formato de saída': FormatIcon,
+    'restrições e requisitos': ConstraintsIcon,
+    'exemplo/estrutura de saída (se aplicável)': StructureIcon,
+    'contexto e persona': PersonaIcon,
+    'tom e estilo': FormatIcon,
+    'ação principal': SparklesIcon,
+    'estilo e qualidade visual': ImageIcon,
+    'composição e pose': PersonaIcon,
+    'iluminação e atmosfera': SparklesIcon,
+    'fundo (background)': ImageIcon,
+    'paleta de cores e tonalidade': FormatIcon,
+    'detalhes finos a replicar': ChecklistIcon
+  };
+
+  const parseStructuredPrompt = (prompt: string): ParsedPromptSection[] => {
+      const sections = prompt.split('\n').filter(line => line.trim() !== '' && !line.startsWith('**Título:'));
+      const parsed: ParsedPromptSection[] = [];
+      let currentSection: ParsedPromptSection | null = null;
+  
+      for (const line of sections) {
+          const match = line.match(/^\*\*(.*?):\*\*(.*)/);
+          if (match) {
+              if (currentSection) parsed.push(currentSection);
+              
+              const fullTitle = match[1].replace(/^\d+\.\s*/, '').trim();
+              const content = match[2].trim();
+              const iconKey = Object.keys(iconMap).find(key => fullTitle.toLowerCase().includes(key));
+              const icon = iconKey ? iconMap[iconKey] : ChecklistIcon;
+              
+              currentSection = { title: fullTitle, content: content, icon: icon };
+          } else if (currentSection) {
+              currentSection.content += '\n' + line;
+          }
+      }
+      if (currentSection) parsed.push(currentSection);
+      return parsed.map(s => ({...s, content: s.content.trim()}));
+  };
+
+  const renderStructuredPrompt = (prompt: string) => {
+    const parsedSections = parseStructuredPrompt(prompt);
+
+    if (parsedSections.length === 0) {
+      // Fallback para formatos inesperados ou prompt de imagem
+      return (
+        <pre className="whitespace-pre-wrap break-words p-4 pt-12 sm:p-8 sm:pt-14 text-[--text-secondary] overflow-auto max-h-[60vh] text-sm sm:text-base leading-relaxed">
+          <code dangerouslySetInnerHTML={formattedPromptHtml} />
+        </pre>
+      )
+    }
+
+    return (
+        <div className="p-4 sm:p-6 space-y-4 max-h-[60vh] overflow-y-auto">
+            {parsedSections.map(({ title, content, icon: Icon }, index) => (
+                <div key={index} className="flex items-start gap-4 p-4 bg-[--bg-tertiary]/60 rounded-lg border border-transparent hover:border-[--primary-main]/50 transition-colors">
+                    <div className="flex-shrink-0 w-8 h-8 rounded-full bg-[--primary-dark]/50 flex items-center justify-center mt-1">
+                        <Icon className="w-5 h-5 text-[--primary-light]" />
+                    </div>
+                    <div>
+                        <h4 className="font-semibold text-[--primary-light]">{title}</h4>
+                        <p className="text-[--text-secondary] text-sm whitespace-pre-wrap">{content}</p>
+                    </div>
+                </div>
+            ))}
+        </div>
+    );
+  };
+
   const renderInitialScreen = () => {
     const commonTitleClass = "text-4xl sm:text-5xl font-extrabold text-[--primary-light] font-heading";
     const commonDescriptionClass = "mt-3 max-w-2xl mx-auto text-base sm:text-lg text-[--text-secondary]";
@@ -537,16 +550,16 @@ const App: React.FC = () => {
                     <button onClick={() => setAcademicInputMethod('text')} className={`px-4 py-2 text-sm font-medium transition-colors ${academicInputMethod === 'text' ? 'border-b-2 border-[--primary-main] text-[--primary-light]' : 'text-[--text-secondary] hover:text-white'}`}>Colar Texto</button>
                 </div>
                 {academicInputMethod === 'pdf' ? (
-                    <label htmlFor="file-upload" className={`w-full cursor-pointer flex flex-col items-center justify-center p-8 sm:p-10 border-2 border-dashed border-[--border-color] rounded-xl transition-all duration-300 ease-in-out transform hover:-translate-y-1 ${apiKey ? 'hover:border-[--primary-main] bg-[--bg-secondary]/50 hover:bg-[--bg-secondary]' : 'bg-[--bg-secondary]/20 cursor-not-allowed'}`}>
+                    <label htmlFor="file-upload" className="w-full cursor-pointer flex flex-col items-center justify-center p-8 sm:p-10 border-2 border-dashed border-[--border-color] rounded-xl transition-all duration-300 ease-in-out transform hover:-translate-y-1 hover:border-[--primary-main] bg-[--bg-secondary]/50 hover:bg-[--bg-secondary]">
                         <UploadIcon className="w-12 h-12 text-[--text-muted]" />
                         <p className="mt-4 text-lg font-semibold text-[--text-secondary]">Arraste e solte um PDF aqui</p>
                         <p className="text-sm text-[--text-muted]">ou clique para selecionar um arquivo</p>
-                        <span className={`mt-4 px-4 py-2 text-white text-sm font-medium rounded-md transition-colors ${apiKey ? 'bg-[--primary-main] hover:brightness-110' : 'bg-gray-600'}`}>{apiKey ? 'Carregar Documento' : 'Configure a API Key'}</span>
+                        <span className="mt-4 px-4 py-2 text-white text-sm font-medium rounded-md transition-colors bg-[--primary-main] hover:brightness-110">Carregar Documento</span>
                     </label>
                 ) : (
                     <div className='w-full'>
                         <textarea value={academicText} onChange={(e) => setAcademicText(e.target.value)} placeholder="Cole aqui as instruções do seu trabalho acadêmico..." className="w-full h-48 p-4 bg-[--bg-secondary] border border-[--border-color] rounded-lg focus:ring-2 focus:ring-[--primary-main] focus:border-[--primary-main] text-[--text-primary] transition-colors" />
-                        <button onClick={handleGenerateClick} disabled={!apiKey || !academicText.trim()} className={generateButtonClass}>{!apiKey ? 'Configure a Chave de API' : 'Gerar Prompt'}</button>
+                        <button onClick={handleGenerateClick} disabled={!academicText.trim()} className={generateButtonClass}>Gerar Prompt</button>
                     </div>
                 )}
             </div>
@@ -557,10 +570,10 @@ const App: React.FC = () => {
             <div className="flex flex-col items-center w-full">
                 <div className="text-center mb-8"><h1 className={commonTitleClass}>Extrator de Estilo de Imagem</h1><p className={commonDescriptionClass}>Envie uma imagem de referência e crie um prompt de estilo universal para aplicar a mesma estética em outras fotos.</p></div>
                 <div className="w-full max-w-lg space-y-6">
-                    <label htmlFor="file-upload" className={`w-full flex flex-col items-center justify-center p-8 border-2 border-dashed border-[--border-color] rounded-xl bg-[--bg-secondary]/50 transition-all ${apiKey ? 'hover:border-[--primary-main] hover:bg-[--bg-secondary] cursor-pointer' : 'cursor-not-allowed'}`}>
+                    <label htmlFor="file-upload" className="w-full flex flex-col items-center justify-center p-8 border-2 border-dashed border-[--border-color] rounded-xl bg-[--bg-secondary]/50 transition-all hover:border-[--primary-main] hover:bg-[--bg-secondary] cursor-pointer">
                         {imagePreview ? <img src={imagePreview} alt="Preview" className="max-h-40 rounded-lg" /> : <><ImageIcon className="w-12 h-12 text-[--text-muted]" /><p className="mt-2 text-lg font-semibold text-[--text-secondary]">Carregar Imagem</p></>}
                     </label>
-                    <button onClick={handleGenerateClick} disabled={!imageFile || !apiKey} className={generateButtonClass}>{!apiKey ? 'Configure a Chave de API' : 'Extrair Estilo'}</button>
+                    <button onClick={handleGenerateClick} disabled={!imageFile} className={generateButtonClass}>Extrair Estilo</button>
                 </div>
             </div>
         );
@@ -575,7 +588,7 @@ const App: React.FC = () => {
                         </button>
                     </div>
                     <textarea value={optimizerInstruction} onChange={(e) => setOptimizerInstruction(e.target.value)} placeholder="Ex: escreva um email para meu chefe pedindo um dia de folga" className="w-full h-48 p-4 bg-[--bg-secondary] border border-[--border-color] rounded-lg focus:ring-2 focus:ring-[--primary-main] text-[--text-primary]" />
-                    <button onClick={handleGenerateClick} disabled={!optimizerInstruction.trim() || !apiKey} className={generateButtonClass}>{!apiKey ? 'Configure a Chave de API' : 'Otimizar Instrução'}</button>
+                    <button onClick={handleGenerateClick} disabled={!optimizerInstruction.trim()} className={generateButtonClass}>Otimizar Instrução</button>
                 </div>
             </div>
         );
@@ -588,7 +601,7 @@ const App: React.FC = () => {
         return (
           <div className="flex flex-col items-center justify-center text-center p-8">
             <div className="w-16 h-16 border-4 border-[--primary-light] border-t-transparent rounded-full animate-spin"></div>
-            <p className="mt-4 text-lg text-[--text-secondary]">Analisando e gerando o prompt...</p>
+            <p className="mt-4 text-lg text-[--text-secondary]">{loadingMessage || 'Processando...'}</p>
             <p className="text-sm text-[--text-muted]">Isso pode levar alguns segundos.</p>
           </div>
         );
@@ -600,9 +613,7 @@ const App: React.FC = () => {
               <button onClick={handleCopy} className={`absolute top-3 right-3 p-2 rounded-lg transition-all duration-300 ease-in-out focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-[--bg-secondary] focus:ring-[--primary-main] ${isCopied ? 'bg-green-500 text-white transform scale-110 shadow-lg' : 'bg-[--bg-tertiary] text-[--text-secondary] hover:brightness-125'}`} aria-label={isCopied ? "Copiado!" : "Copiar prompt"}>
                 {isCopied ? <CheckIcon className="w-5 h-5" /> : <CopyIcon className="w-5 h-5" />}
               </button>
-              <pre className="whitespace-pre-wrap break-words p-4 pt-12 sm:p-8 sm:pt-14 text-[--text-secondary] overflow-auto max-h-[60vh] text-sm sm:text-base leading-relaxed">
-                <code dangerouslySetInnerHTML={formattedPromptHtml} />
-              </pre>
+              {renderStructuredPrompt(generatedPrompt)}
             </div>
             <div className="mt-6 w-full flex flex-col sm:flex-row flex-wrap gap-4 justify-center">
                 <button onClick={handleReset} className="w-full sm:w-auto inline-flex items-center justify-center px-6 py-3 border border-transparent text-base font-semibold rounded-md shadow-sm text-black/80 bg-[--accent-green] hover:brightness-95 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-[--bg-primary] focus:ring-[--accent-green] transition-transform transform hover:scale-105">Gerar Outro Prompt</button>
@@ -621,8 +632,8 @@ const App: React.FC = () => {
           <div className="text-center p-8 bg-red-900/20 border border-red-500 rounded-lg">
             <h3 className="text-2xl font-semibold text-red-400 font-heading">Ocorreu um Erro</h3>
             <p className="mt-2 text-red-300">{error}</p>
-            <button onClick={error?.includes('chave de API') ? handleOpenApiKeyModal : handleReset} className="mt-6 inline-flex items-center justify-center px-5 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-red-600 hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-[--bg-primary] focus:ring-red-500">
-                {error?.includes('chave de API') ? 'Verificar API Key' : 'Tentar Novamente'}
+            <button onClick={handleReset} className="mt-6 inline-flex items-center justify-center px-5 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-red-600 hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-[--bg-primary] focus:ring-red-500">
+                Tentar Novamente
             </button>
           </div>
         );
@@ -634,7 +645,7 @@ const App: React.FC = () => {
 
   const getPromptTitle = (prompt: string, mode: PromptMode, index: number, historyLength: number): string => {
     if (mode === 'academic') {
-        return prompt.split('\n').find(line => line.startsWith('**2. objetivo principal:**'))?.replace('**2. objetivo principal:**', '').trim() || `Prompt ${historyLength - index}`;
+        return prompt.split('\n').find(line => line.startsWith('**2. Objetivo Principal:**'))?.replace('**2. Objetivo Principal:**', '').trim() || `Prompt ${historyLength - index}`;
     }
     const firstLine = prompt.split('\n')[0].replace(/\*\*/g, '').replace('Título:', '').trim();
     if (firstLine.length > 5 && firstLine.length < 60) return firstLine;
@@ -699,7 +710,6 @@ const App: React.FC = () => {
 
   return (
     <div className="flex h-screen bg-[--bg-primary] text-[--text-secondary] font-sans antialiased">
-        {renderApiKeyModal()}
         {isSidebarOpen && <div onClick={() => setIsSidebarOpen(false)} className="fixed inset-0 bg-black/60 z-30 md:hidden" aria-hidden="true" />}
       {/* Sidebar */}
       <aside className={`fixed inset-y-0 left-0 z-40 w-80 flex-shrink-0 bg-[--bg-secondary]/80 backdrop-blur-sm border-r border-[--border-color] flex flex-col transform transition-transform duration-300 ease-in-out md:relative md:translate-x-0 ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
@@ -742,17 +752,6 @@ const App: React.FC = () => {
             {renderHistory()}
           </div>
         </div>
-        
-        {/* Settings Button */}
-        <div className="p-4 border-t border-[--border-color] flex-shrink-0">
-            <button
-                onClick={handleOpenApiKeyModal}
-                className="w-full flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium transition-colors text-[--text-secondary] hover:bg-[--bg-tertiary] hover:text-[--text-primary] focus:outline-none focus:ring-2 focus:ring-[--primary-main]"
-            >
-                <SettingsIcon className="w-5 h-5" />
-                <span>Configurações</span>
-            </button>
-        </div>
       </aside>
 
       {/* Main Content */}
@@ -772,7 +771,6 @@ const App: React.FC = () => {
           ref={fileInputRef}
           accept={promptMode === 'academic' ? '.pdf' : 'image/*'}
           key={promptMode} // Reset file input when mode changes
-          disabled={!apiKey}
         />
         <div className="flex flex-col items-center justify-center w-full h-full p-4">
             {renderContent()}
