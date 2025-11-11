@@ -170,7 +170,6 @@ const App: React.FC = () => {
   // Image Mode State
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
-  const [extractClothingDetails, setExtractClothingDetails] = useState<boolean>(false);
 
   // Optimizer Mode State (from session)
   const [optimizerInstruction, setOptimizerInstruction] = useState(initialSessionState.optimizerInstruction);
@@ -342,7 +341,7 @@ const App: React.FC = () => {
                 });
 
             const base64Image = await fileToBase64(imageFile);
-            prompt = await generateUniversalImageStylePrompt(base64Image, imageFile.type, apiKey, extractClothingDetails);
+            prompt = await generateUniversalImageStylePrompt(base64Image, imageFile.type, apiKey);
             setImageHistory(prev => [prompt, ...prev.filter(p => p !== prompt)].slice(0, 10));
         } else if (promptMode === 'optimizer') {
             if (!optimizerInstruction.trim()) throw new Error('Por favor, insira uma instrução para otimizar.');
@@ -561,18 +560,6 @@ const App: React.FC = () => {
                     <label htmlFor="file-upload" className={`w-full flex flex-col items-center justify-center p-8 border-2 border-dashed border-[--border-color] rounded-xl bg-[--bg-secondary]/50 transition-all ${apiKey ? 'hover:border-[--primary-main] hover:bg-[--bg-secondary] cursor-pointer' : 'cursor-not-allowed'}`}>
                         {imagePreview ? <img src={imagePreview} alt="Preview" className="max-h-40 rounded-lg" /> : <><ImageIcon className="w-12 h-12 text-[--text-muted]" /><p className="mt-2 text-lg font-semibold text-[--text-secondary]">Carregar Imagem</p></>}
                     </label>
-                    <div className="flex items-center justify-center gap-2">
-                        <input
-                            id="clothing-checkbox"
-                            type="checkbox"
-                            checked={extractClothingDetails}
-                            onChange={(e) => setExtractClothingDetails(e.target.checked)}
-                            className="h-4 w-4 rounded border-[--border-color] bg-[--bg-tertiary] text-[--primary-main] focus:ring-[--primary-main] focus:ring-offset-0"
-                        />
-                        <label htmlFor="clothing-checkbox" className="text-sm font-medium text-[--text-secondary] cursor-pointer">
-                            Incluir detalhes da roupa
-                        </label>
-                    </div>
                     <button onClick={handleGenerateClick} disabled={!imageFile || !apiKey} className={generateButtonClass}>{!apiKey ? 'Configure a Chave de API' : 'Extrair Estilo'}</button>
                 </div>
             </div>
